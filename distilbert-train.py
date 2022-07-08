@@ -6,6 +6,20 @@ from transformers import DistilBertTokenizerFast
 import torch
 from torch.utils.data import DataLoader
 from transformers import DistilBertForSequenceClassification, AdamW
+from pynvml import *
+
+
+def print_gpu_utilization():
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(0)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print(f"GPU memory occupied: {info.used//1024**2} MB.")
+
+
+def print_summary(result):
+    print(f"Time: {result.metrics['train_runtime']:.2f}")
+    print(f"Samples/second: {result.metrics['train_samples_per_second']:.2f}")
+    print_gpu_utilization()
 
 
 
@@ -43,8 +57,8 @@ if __name__ == "__main__":
 
         return texts, labels
 
-    train_texts, train_labels = read_jd_split("./imdb_splits/train.json", "./imdb_splits/cat_to_id.json","review","sentiment")
-    test_texts, test_labels = read_jd_split("./imdb_splits/test.json", "./imdb_splits/cat_to_id.json","review","sentiment")
+    train_texts, train_labels = read_jd_split("./splits/train.json", "./category_to_id.json","jd_sentence_text","jd_sent_manual_label_NEW")
+    test_texts, test_labels = read_jd_split("./splits/test.json", "./category_to_id.json","jd_sentence_text","jd_sent_manual_label_NEW")
 
     train_texts, val_texts, train_labels, val_labels = train_test_split(train_texts, train_labels, test_size=.2)
 
@@ -60,7 +74,7 @@ if __name__ == "__main__":
 
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-    with open(f"./imdb_splits/cat_to_id.json", 'r') as f:
+    with open(f"./category_to_id.json", 'r') as f:
             cat_to_id = json.load(f)
 
     num_lables = len(cat_to_id)
@@ -70,10 +84,12 @@ if __name__ == "__main__":
     model.to(device)
     model.train()
 
+    print_gpu_utilization()
+
     print(len(val_dataset),len(test_dataset))
 
     train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=16, shuffle=True)
 
     optim = AdamW(model.parameters(), lr=5e-5)
@@ -100,9 +116,9 @@ if __name__ == "__main__":
                 outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs[0]
                 logits = outputs[1]
-                n_logits = logits.detach().numpy()
+                n_logits = logits.detach().cpu().numpy()
                 max_indexes = np.argmax(n_logits, axis=1)
-                total_correct += sum(np.equal(max_indexes, labels) * 1)
+                total_correct += sum(np.equal(max_indexes, labels.detach().cpu().numpy()) * 1)
                 
             current_accu = total_correct/len(val_dataset)
             print("Current group Accuracy:", current_accu)
@@ -117,7 +133,6 @@ if __name__ == "__main__":
                 final_save_location = idx
                 torch.save(model.state_dict(), f"./model_saves/model_at_batch_{idx}.pt")
         else:
-            print("Train")
             model.train()
             torch.enable_grad()
             optim.zero_grad()
@@ -144,9 +159,9 @@ if __name__ == "__main__":
         outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
         loss = outputs[0]
         logits = outputs[1]
-        n_logits = logits.detach().numpy()
+        n_logits = logits.detach().cpu().numpy()
         max_indexes = np.argmax(n_logits, axis=1)
-        final_total_correct += sum(np.equal(max_indexes, labels) * 1)
+        final_total_correct += sum(np.equal(max_indexes, labels.detach().cpu().numpy()) * 1)
     
     print("Accuracy: ", final_total_correct/len(test_dataset))
 
